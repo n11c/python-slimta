@@ -84,7 +84,7 @@ class CloudStorage(QueueStorage):
 
     def increment_attempts(self, id):
         meta = self.obj_store.get_message_meta(id)
-        new_attempts = meta['attempts'] + 1
+        new_attempts = meta.get('attempts', 0) + 1
         self.obj_store.set_message_meta(id, attempts=new_attempts)
         log.update_meta(id, attempts=new_attempts)
         return new_attempts

@@ -53,6 +53,14 @@ class TestCloudStorage(MoxTestBase):
         storage = CloudStorage(self.obj_store, self.msg_queue)
         self.assertEqual(4, storage.increment_attempts('testid'))
 
+    def test_increment_attempts_first(self):
+        self.obj_store.get_message_meta('testid').AndReturn(
+            {'timestamp': 1234.0})
+        self.obj_store.set_message_meta('testid', attempts=1)
+        self.mox.ReplayAll()
+        storage = CloudStorage(self.obj_store, self.msg_queue)
+        self.assertEqual(1, storage.increment_attempts('testid'))
+
     def test_load(self):
         self.obj_store.list_messages().AndReturn(['1', '2', '3'])
         self.mox.ReplayAll()

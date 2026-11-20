@@ -1,128 +1,151 @@
-
 import json
+import unittest
+from unittest import mock
 
-from mox import MoxTestBase, IsA
-from six.moves import cPickle
-import gevent
+import pytest
 
-from boto.s3.bucket import Bucket
-from boto.s3.key import Key
-from boto.sqs.queue import Queue
-from boto.sqs.message import Message
+boto3 = pytest.importorskip('boto3')
+moto = pytest.importorskip('moto')
 
-from slimta.envelope import Envelope
-from slimta.cloudstorage.aws import SimpleStorageService, SimpleQueueService
+import gevent  # noqa: E402
+
+from slimta.envelope import Envelope  # noqa: E402
+from slimta.cloudstorage import CloudStorage  # noqa: E402
+from slimta.cloudstorage.aws import (  # noqa: E402
+    SimpleStorageService, SimpleQueueService)
+
+REGION = 'us-east-1'
 
 
-class TestSimpleStorageService(MoxTestBase):
+class _AwsTestCase(unittest.TestCase):
 
     def setUp(self):
-        super(TestSimpleStorageService, self).setUp()
-        self.bucket = self.mox.CreateMock(Bucket)
-        self.key = self.mox.CreateMock(Key)
+        super().setUp()
+        env = mock.patch.dict('os.environ', {
+            'AWS_ACCESS_KEY_ID': 'testing',
+            'AWS_SECRET_ACCESS_KEY': 'testing',
+            'AWS_DEFAULT_REGION': REGION,
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        self.aws = moto.mock_aws()
+        self.aws.start()
+        self.addCleanup(self.aws.stop)
+        self.env = Envelope('sender@example.com',
+                            ['rcpt1@example.com', 'rcpt2@example.com'])
+        self.env.parse(b'Subject: test\r\n\r\nbody\r\n')
+
+
+class TestSimpleStorageService(_AwsTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.bucket = boto3.resource('s3', region_name=REGION) \
+            .create_bucket(Bucket='slimta-test')
         self.s3 = SimpleStorageService(self.bucket, prefix='test-')
-        self.s3.Key = self.mox.CreateMockAnything()
-        self.env = Envelope('sender@example.com', ['rcpt@example.com'])
-        self.pickled_env = cPickle.dumps(self.env, cPickle.HIGHEST_PROTOCOL)
 
     def test_write_message(self):
-        self.s3.Key.__call__(self.bucket).AndReturn(self.key)
-        self.key.set_metadata('timestamp', '1234.0')
-        self.key.set_metadata('attempts', '')
-        self.key.set_metadata('delivered_indexes', '')
-        self.key.set_contents_from_string(self.pickled_env)
-        self.mox.ReplayAll()
-        self.s3.write_message(self.env, 1234.0)
-        self.assertTrue(isinstance(self.key.key, str))
-        self.assertTrue(self.key.key.startswith('test-'))
-
-    def test_set_message_meta(self):
-        self.bucket.get_key('storeid').AndReturn(self.key)
-        self.key.set_metadata('timestamp', '5678.0')
-        self.key.set_metadata('attempts', '3')
-        self.mox.ReplayAll()
-        self.s3.set_message_meta('storeid', 5678.0, 3)
-
-    def test_delete_message(self):
-        self.bucket.get_key('storeid').AndReturn(self.key)
-        self.key.delete()
-        self.mox.ReplayAll()
-        self.s3.delete_message('storeid')
+        id = self.s3.write_message(self.env, 1234.0)
+        self.assertTrue(id.startswith('test-'))
+        obj = self.bucket.Object(id)
+        obj.load()
+        self.assertEqual({'timestamp': '1234.0', 'attempts': '',
+                          'delivered_indexes': ''}, obj.metadata)
 
     def test_get_message(self):
-        self.bucket.get_key('storeid').AndReturn(self.key)
-        self.key.get_contents_as_string().AndReturn(self.pickled_env)
-        self.key.get_metadata('timestamp').AndReturn('4321.0')
-        self.key.get_metadata('attempts').AndReturn('5')
-        self.key.get_metadata('delivered_indexes').AndReturn('')
-        self.mox.ReplayAll()
-        env, meta = self.s3.get_message('storeid')
+        id = self.s3.write_message(self.env, 1234.0)
+        env, meta = self.s3.get_message(id)
         self.assertEqual('sender@example.com', env.sender)
-        self.assertEqual(['rcpt@example.com'], env.recipients)
-        self.assertEqual(4321.0, meta['timestamp'])
-        self.assertEqual(5, meta['attempts'])
-        self.assertFalse('delivered_indexes' in meta)
+        self.assertEqual(['rcpt1@example.com', 'rcpt2@example.com'],
+                         env.recipients)
+        self.assertEqual('test', env.headers['Subject'])
+        self.assertEqual({'timestamp': 1234.0}, meta)
 
-    def test_get_message_meta(self):
-        self.bucket.get_key('storeid').AndReturn(self.key)
-        self.key.get_metadata('timestamp').AndReturn('4321.0')
-        self.key.get_metadata('attempts').AndReturn('5')
-        self.key.get_metadata('delivered_indexes').AndReturn('[1, 2]')
-        self.mox.ReplayAll()
-        meta = self.s3.get_message_meta('storeid')
-        self.assertEqual(4321.0, meta['timestamp'])
-        self.assertEqual(5, meta['attempts'])
-        self.assertEqual([1, 2], meta['delivered_indexes'])
+    def test_set_message_meta_persists(self):
+        id = self.s3.write_message(self.env, 1234.0)
+        self.s3.set_message_meta(id, attempts=3)
+        self.s3.set_message_meta(id, timestamp=5678.0, delivered_indexes=[1])
+        self.assertEqual({'timestamp': 5678.0, 'attempts': 3,
+                          'delivered_indexes': [1]},
+                         self.s3.get_message_meta(id))
+        env, _ = self.s3.get_message(id)
+        self.assertEqual('sender@example.com', env.sender)
+
+    def test_delete_message(self):
+        id = self.s3.write_message(self.env, 1234.0)
+        self.s3.delete_message(id)
+        self.assertRaises(KeyError, self.s3.get_message, id)
+
+    def test_missing_message(self):
+        self.assertRaises(KeyError, self.s3.get_message, 'test-nope')
+        self.assertRaises(KeyError, self.s3.get_message_meta, 'test-nope')
+        self.assertRaises(KeyError, self.s3.set_message_meta, 'test-nope',
+                          attempts=1)
+        self.assertRaises(KeyError, self.s3.delete_message, 'test-nope')
 
     def test_list_messages(self):
-        self.mox.StubOutWithMock(self.s3, 'get_message_meta')
-        self.bucket.list('test-').AndReturn(['test-storeid1', 'test-storeid2'])
-        self.s3.get_message_meta('test-storeid1').AndReturn((1234.0, 1))
-        self.s3.get_message_meta('test-storeid2').AndReturn((5678.0, 2))
-        self.mox.ReplayAll()
-        ret = list(self.s3.list_messages())
-        self.assertEqual([(1234.0, 'test-storeid1'), (5678.0, 'test-storeid2')], ret)
+        id1 = self.s3.write_message(self.env, 1234.0)
+        id2 = self.s3.write_message(self.env, 5678.0)
+        self.bucket.put_object(Key='other-key', Body=b'',
+                               Metadata={'timestamp': '1.0'})
+        self.assertEqual(sorted([(1234.0, id1), (5678.0, id2)]),
+                         sorted(self.s3.list_messages()))
 
 
-class TestSimpleQueueService(MoxTestBase):
+class TestSimpleQueueService(_AwsTestCase):
 
     def setUp(self):
-        super(TestSimpleQueueService, self).setUp()
-        self.queue = self.mox.CreateMock(Queue)
+        super().setUp()
+        self.queue = boto3.resource('sqs', region_name=REGION) \
+            .create_queue(QueueName='slimta-test')
         self.sqs = SimpleQueueService(self.queue)
 
-    def test_queue_message(self):
-        self.sqs.Message = self.mox.CreateMockAnything()
-        msg = self.mox.CreateMock(Message)
-        self.sqs.Message.__call__().AndReturn(msg)
-        msg.set_body(json.dumps({'timestamp': 1234.0, 'storage_id': 'storeid'}))
-        self.queue.write(msg).AndReturn(False)
-        self.queue.write(msg).AndReturn(True)
-        self.mox.ReplayAll()
-        self.sqs.queue_message('storeid', 1234.0)
-
-    def test_poll(self):
-        msg1 = self.mox.CreateMock(Message)
-        msg2 = self.mox.CreateMock(Message)
-        self.queue.get_messages().AndReturn([msg1, msg2])
-        msg1.get_body().AndReturn('{"timestamp": 1234.0, "storage_id": "storeid1"}')
-        msg2.get_body().AndReturn('{"timestamp": 5678.0, "storage_id": "storeid2"}')
-        self.mox.ReplayAll()
+    def test_queue_message_and_poll(self):
+        self.sqs.queue_message('storeid1', 1234.0)
+        self.sqs.queue_message('storeid2', 5678.0)
         ret = list(self.sqs.poll())
-        self.assertEqual([(1234.0, 'storeid1', msg1), (5678.0, 'storeid2', msg2)], ret)
-
-    def test_sleep(self):
-        self.mox.StubOutWithMock(gevent, 'sleep')
-        gevent.sleep(13.0)
-        self.mox.ReplayAll()
-        sqs = SimpleQueueService(None, poll_pause=13.0)
-        sqs.sleep()
+        self.assertEqual([(1234.0, 'storeid1'), (5678.0, 'storeid2')],
+                         sorted((ts, id) for ts, id, _ in ret))
+        body = json.loads(ret[0][2].body)
+        self.assertEqual({'timestamp', 'storage_id'}, set(body))
 
     def test_delete(self):
-        msg = self.mox.CreateMock(Message)
-        self.queue.delete_message(msg)
-        self.mox.ReplayAll()
+        self.sqs.queue_message('storeid', 1234.0)
+        (_, _, msg), = self.sqs.poll()
         self.sqs.delete(msg)
+        self.queue.reload()
+        self.assertEqual('0', self.queue.attributes[
+            'ApproximateNumberOfMessages'])
+        self.assertEqual('0', self.queue.attributes[
+            'ApproximateNumberOfMessagesNotVisible'])
+
+    def test_sleep(self):
+        sqs = SimpleQueueService(None, poll_pause=13.0)
+        with mock.patch.object(gevent, 'sleep') as sleep:
+            sqs.sleep()
+        sleep.assert_called_once_with(13.0)
+
+
+class TestCloudStorageAws(_AwsTestCase):
+
+    def test_round_trip(self):
+        bucket = boto3.resource('s3', region_name=REGION) \
+            .create_bucket(Bucket='slimta-test')
+        queue = boto3.resource('sqs', region_name=REGION) \
+            .create_queue(QueueName='slimta-test')
+        storage = CloudStorage(SimpleStorageService(bucket),
+                               SimpleQueueService(queue, poll_pause=0))
+        id = storage.write(self.env, 1234.0)
+        self.assertEqual([(1234.0, id)], list(storage.wait()))
+        self.assertEqual(1, storage.increment_attempts(id))
+        self.assertEqual(2, storage.increment_attempts(id))
+        storage.set_recipients_delivered(id, [0])
+        env, attempts = storage.get(id)
+        self.assertEqual(2, attempts)
+        self.assertEqual(['rcpt2@example.com'], env.recipients)
+        self.assertEqual([(1234.0, id)], list(storage.load()))
+        storage.remove(id)
+        self.assertEqual([], list(storage.load()))
 
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4
