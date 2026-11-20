@@ -1,9 +1,11 @@
-pytest >= 4
+pytest >= 8
 pytest-cov
 pyright
 pymox
 testfixtures
+moto[s3,sqs]
 flake8
+build
 twine
 
 -r requirements-all.txt

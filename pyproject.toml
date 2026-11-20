@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools >= 77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-slimta"
+version = "6.0.0"
+description = "Lightweight, asynchronous SMTP libraries."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
+authors = [{ name = "Ian Good", email = "ian@icgood.net" }]
+requires-python = ">= 3.12"
+dependencies = [
+    "gevent >= 24.10",
+    "pysasl >= 1",
+    "pycares >= 5",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Communications :: Email :: Mail Transport Agents",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+]
+
+[project.optional-dependencies]
+spf = ["pyspf", "py3dns"]
+redis = ["redis"]
+aws = ["boto3"]
+
+[project.urls]
+Homepage = "https://github.com/slimta/python-slimta"
+
+[tool.setuptools.packages.find]
+include = ["slimta.*"]
+namespaces = true
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "declare_namespace",
+    "pragma: no cover",
+    "raise NotImplementedError",
+]

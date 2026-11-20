@@ -14,7 +14,7 @@ can incorporate any protocol or policy, custom or built-in. An MTA built with
 Python's great community.
 
 The `python-slimta` project is released under the [MIT License][4]. It is
-tested for Python 3.6+.
+tested for Python 3.12+.
 
 [![build](https://github.com/slimta/python-slimta/actions/workflows/python-package.yml/badge.svg)](https://github.com/slimta/python-slimta/actions/workflows/python-package.yml)
 [![PyPI](https://img.shields.io/pypi/v/python-slimta.svg)](https://pypi.python.org/pypi/python-slimta)
