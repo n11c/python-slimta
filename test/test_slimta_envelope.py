@@ -30,7 +30,7 @@ test test
     def test_repr(self):
         env = Envelope('sender@example.com')
         s = repr(env)
-        self.assertRegexpMatches(s, r"<Envelope at 0x[a-fA-F0-9]+, sender=b?'sender@example.com'>")
+        self.assertRegex(s, r"<Envelope at 0x[a-fA-F0-9]+, sender=b?'sender@example.com'>")
 
     def test_flatten(self):
         header_str = b"""\

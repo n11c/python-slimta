@@ -19,38 +19,38 @@ class TestDictLookup(MoxTestBase):
         self.data['rcpt2@example.com'] = {'verp': 'verp.com'}
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         self.address_policy.apply(env)
-        self.assertEquals('sender=example.com@verp.com', env.sender)
-        self.assertEquals(['rcpt1@example.com', 'rcpt2=example.com@verp.com'], env.recipients)
+        self.assertEqual('sender=example.com@verp.com', env.sender)
+        self.assertEqual(['rcpt1@example.com', 'rcpt2=example.com@verp.com'], env.recipients)
 
     def test_alias(self):
         self.data['sender@example.com'] = {'alias': 'sender@other.com'}
         self.data['rcpt2@example.com'] = {'alias': 'other.com'}
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         self.address_policy.apply(env)
-        self.assertEquals('sender@other.com', env.sender)
-        self.assertEquals(['rcpt1@example.com', 'rcpt2@other.com'], env.recipients)
+        self.assertEqual('sender@other.com', env.sender)
+        self.assertEqual(['rcpt1@example.com', 'rcpt2@other.com'], env.recipients)
 
     def test_alias_domain(self):
         self.data['example.com'] = {'alias': 'other.com'}
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         self.domain_policy.apply(env)
-        self.assertEquals('sender@other.com', env.sender)
-        self.assertEquals(['rcpt1@other.com', 'rcpt2@other.com'], env.recipients)
+        self.assertEqual('sender@other.com', env.sender)
+        self.assertEqual(['rcpt1@other.com', 'rcpt2@other.com'], env.recipients)
 
     def test_alias_rewrite(self):
         self.data['sender@example.com'] = {'alias': 'test+{localpart}@other.com'}
         self.data['rcpt2@example.com'] = {'alias': 'test@{domain}'}
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         self.address_policy.apply(env)
-        self.assertEquals('test+sender@other.com', env.sender)
-        self.assertEquals(['rcpt1@example.com', 'test@example.com'], env.recipients)
+        self.assertEqual('test+sender@other.com', env.sender)
+        self.assertEqual(['rcpt1@example.com', 'test@example.com'], env.recipients)
 
     def test_alias_domain_rewrite(self):
         self.data['example.com'] = {'alias': 'test+{localpart}@other.com'}
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         self.domain_policy.apply(env)
-        self.assertEquals('test+sender@other.com', env.sender)
-        self.assertEquals(['test+rcpt1@other.com', 'test+rcpt2@other.com'], env.recipients)
+        self.assertEqual('test+sender@other.com', env.sender)
+        self.assertEqual(['test+rcpt1@other.com', 'test+rcpt2@other.com'], env.recipients)
 
     def test_add_headers(self):
         self.data['sender@example.com'] = {'add_headers': '{"X-Test-A": "one"}'}
@@ -58,7 +58,7 @@ class TestDictLookup(MoxTestBase):
         env = Envelope('sender@example.com', ['rcpt1@example.com', 'rcpt2@example.com'])
         env.parse(b"""\n\n""")
         self.address_policy.apply(env)
-        self.assertEquals('one', env.headers['x-test-a'])
-        self.assertEquals('two', env.headers['x-test-b'])
+        self.assertEqual('one', env.headers['x-test-a'])
+        self.assertEqual('two', env.headers['x-test-b'])
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4:tw=0

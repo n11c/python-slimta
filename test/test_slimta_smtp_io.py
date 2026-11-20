@@ -1,6 +1,9 @@
+import errno
 import unittest
+from unittest import mock
 from mox import MoxTestBase, IsA
 from gevent.socket import socket
+from gevent.ssl import SSLSocket, SSLError, SSLWantReadError
 
 from slimta.smtp.io import IO
 from slimta.smtp import BadReply, ConnectionLost
@@ -166,6 +169,30 @@ class TestSmtpIO(MoxTestBase, unittest.TestCase):
         io = IO(self.sock)
         io.send_command(b'CMD\xff')
         self.assertEqual(b'CMD\xff\r\n', io.send_buffer.getvalue())
+
+
+class TestSmtpIOClose(unittest.TestCase):
+
+    def _ssl_sock(self, unwrap_exc):
+        sock = mock.MagicMock(spec=SSLSocket)
+        sock.fileno.return_value = -1
+        sock.unwrap.side_effect = unwrap_exc
+        return sock
+
+    def test_close_ignores_ssl_error_on_unwrap(self):
+        exc = SSLError(1, '[SSL: APPLICATION_DATA_AFTER_CLOSE_NOTIFY]')
+        sock = self._ssl_sock(exc)
+        IO(sock).close()
+        sock.close.assert_called_once_with()
+
+    def test_close_ignores_ssl_want_read_on_unwrap(self):
+        sock = self._ssl_sock(SSLWantReadError())
+        IO(sock).close()
+        sock.close.assert_called_once_with()
+
+    def test_close_raises_unexpected_socket_error(self):
+        sock = self._ssl_sock(OSError(errno.EBADF, 'bad fd'))
+        self.assertRaises(OSError, IO(sock).close)
 
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4

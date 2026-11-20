@@ -86,7 +86,7 @@ class TestMaildropRelay(MoxTestBase, unittest.TestCase):
 
     def test_extra_args(self):
         m = MaildropRelay(extra_args=['-t', 'test'])
-        self.assertEquals(['-t', 'test'], m.args[-2:])
+        self.assertEqual(['-t', 'test'], m.args[-2:])
 
     def test_raise_error(self):
         m = MaildropRelay()
@@ -100,7 +100,7 @@ class TestDovecotLdaRelay(MoxTestBase, unittest.TestCase):
 
     def test_extra_args(self):
         m = DovecotLdaRelay(extra_args=['-t', 'test'])
-        self.assertEquals(['-t', 'test'], m.args[-2:])
+        self.assertEqual(['-t', 'test'], m.args[-2:])
 
     def test_raise_error(self):
         m = DovecotLdaRelay()

@@ -31,7 +31,7 @@ class TestBytesFormat(unittest.TestCase):
 
     def test_repr(self):
         bf = BytesFormat(b'abc{test}ghi{0}mno', mode='strict')
-        self.assertRegexpMatches(repr(bf), r"b?'abc\{test\}ghi\{0\}mno'")
+        self.assertRegex(repr(bf), r"b?'abc\{test\}ghi\{0\}mno'")
 
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4

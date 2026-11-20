@@ -31,13 +31,6 @@ from gevent.ssl import SSLSocket, SSLError, create_default_context
 from slimta import logging
 from . import ConnectionLost, BadReply
 
-try:
-    from gevent.ssl import SSLWantReadError
-except ImportError:
-    # Some supported versions of gevent won't have this.
-    class SSLWantReadError(Exception):
-        pass
-
 __all__ = ['IO']
 
 line_pattern = re.compile(br'(.*?)\r?\n')
@@ -74,7 +67,9 @@ class IO(object):
                 self.socket.unwrap()
             except ValueError:
                 pass
-            except SSLWantReadError:
+            except SSLError:
+                # The TLS shutdown handshake is best-effort: the peer may
+                # have already closed, or sent data after close_notify.
                 pass
             except socket_error as e:
                 if e.errno not in (0, EPIPE, ECONNRESET):

@@ -33,7 +33,7 @@ class TestPolicyHeaders(unittest.TestCase):
         self.assertEqual(None, env.headers['Message-Id'])
         amih.apply(env)
         pattern = r'^<[0-9a-fA-F]{32}\.1234567890@example.com>$'
-        self.assertRegexpMatches(env.headers['Message-Id'], pattern)
+        self.assertRegex(env.headers['Message-Id'], pattern)
 
     def test_add_message_id_header_existing(self):
         env = Envelope()
@@ -53,7 +53,7 @@ class TestPolicyHeaders(unittest.TestCase):
         env.receiver = 'test.com'
         arh = AddReceivedHeader()
         arh.apply(env)
-        self.assertRegexpMatches(env.headers['Received'],
+        self.assertRegex(env.headers['Received'],
                 r'from mail\.example\.com \(unknown \[1.2.3.4\]\) by test.com '
                 r'\(slimta [^\)]+\) with ESMTPS for <rcpt@example.com>; ')
 

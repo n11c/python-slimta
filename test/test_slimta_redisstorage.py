@@ -2,7 +2,7 @@
 import re
 
 from mox import MoxTestBase, IsA, Func
-from six.moves import cPickle
+import pickle as cPickle
 from redis import StrictRedis
 
 from slimta.redisstorage import RedisStorage

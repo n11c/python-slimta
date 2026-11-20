@@ -62,7 +62,8 @@ class Forward(QueuePolicy):
         for i in range(n_rcpt):
             old_rcpt = envelope.recipients[i]
             for pattern, repl, count in self.mapping:
-                new_rcpt, changes = re.subn(pattern, repl, old_rcpt, count)
+                new_rcpt, changes = re.subn(pattern, repl, old_rcpt,
+                                            count=count)
                 if new_rcpt and changes > 0:
                     envelope.recipients[i] = new_rcpt
                     break

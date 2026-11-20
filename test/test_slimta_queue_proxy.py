@@ -23,7 +23,7 @@ class TestProxyQueue(MoxTestBase, unittest.TestCase):
         self.assertEqual(1, len(ret))
         self.assertEqual(2, len(ret[0]))
         self.assertEqual(self.env, ret[0][0])
-        self.assertRegexpMatches(ret[0][1], r'[0-9a-fA-F]{32}')
+        self.assertRegex(ret[0][1], r'[0-9a-fA-F]{32}')
 
     def test_enqueue_relayerror(self):
         err = PermanentRelayError('msg failure', Reply('550', 'Not Ok'))
