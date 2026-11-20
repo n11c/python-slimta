@@ -20,11 +20,8 @@
 #
 
 """Package implementing the :mod:`~slimta.queue` storage system on disk. Disk
-reads and writes are built using the aio_ interface, provided in python by the
-pyaio_ project.
-
-.. _aio: http://www.kernel.org/doc/man-pages/online/pages/man7/aio.7.html
-.. _pyaio: https://github.com/felipecruz/pyaio
+reads and writes are run in the gevent hub's native threadpool, so they do not
+block other greenlets.
 
 """
 
@@ -35,12 +32,8 @@ import uuid
 import os.path
 import pickle
 from tempfile import mkstemp
-from functools import partial
 
-from pyaio import aio_read, aio_write  # type: ignore
 import gevent
-from gevent.event import AsyncResult  # type: ignore
-from gevent.lock import Semaphore
 
 from slimta.queue import QueueStorage
 from slimta import logging
@@ -51,116 +44,46 @@ log = logging.getQueueStorageLogger(__name__)
 
 
 class AioFile(object):
+    """Reads and writes whole files without blocking the gevent hub, by
+    running the blocking file I/O in the hub's native threadpool.
 
-    _keep_awake_thread = None
-    _keep_awake_refs = 0
-    _keep_awake_lock = Semaphore(1)
-
-    chunk_size = (16 << 10)
+    """
 
     def __init__(self, path, tmp_dir=None):
         self.path = path
         self.tmp_dir = tmp_dir
 
     @classmethod
-    def _start_keep_awake_thread(cls):
-        cls._keep_awake_lock.acquire()
-        try:
-            if not cls._keep_awake_thread:
-                cls._keep_awake_thread = gevent.spawn(cls._keep_awake)
-            cls._keep_awake_refs += 1
-        finally:
-            cls._keep_awake_lock.release()
+    def _run(cls, func, *args):
+        return gevent.get_hub().threadpool.apply(func, args)
 
     @classmethod
-    def _stop_keep_awake_thread(cls):
-        cls._keep_awake_lock.acquire()
+    def _dump_blocking(cls, path, tmp_dir, data):
+        fd, filename = mkstemp(dir=tmp_dir)
         try:
-            cls._keep_awake_refs -= 1
-            if cls._keep_awake_refs <= 0:
-                assert cls._keep_awake_thread is not None
-                cls._keep_awake_thread.kill()
-                cls._keep_awake_thread = None
-        finally:
-            cls._keep_awake_lock.release()
+            with os.fdopen(fd, 'wb') as tmp_file:
+                tmp_file.write(data)
+            os.rename(filename, path)
+        except BaseException:
+            try:
+                os.unlink(filename)
+            except OSError:
+                pass
+            raise
 
     @classmethod
-    def _keep_awake(cls):
-        while True:
-            gevent.sleep(0.001)
-
-    def _write_callback(self, event, ret, errno):
-        if ret > 0:
-            event.set(ret)
-        else:
-            exc = IOError(errno, os.strerror(errno))
-            event.set_exception(exc)
-
-    def _write_piece(self, fd, data, data_len, offset):
-        remaining = data_len - offset
-        if remaining > self.chunk_size:
-            remaining = self.chunk_size
-        piece = data[offset:offset+remaining]
-        event = AsyncResult()
-        callback = partial(self._write_callback, event)
-        aio_write(fd, piece, offset, callback)
-        return event.get()
+    def _load_blocking(cls, path):
+        with open(path, 'rb') as in_file:
+            return in_file.read()
 
     def dump(self, data):
-        try:
-            data_view = memoryview(data)
-        except NameError:
-            data_view = data
-        data_len = len(data)
-        offset = 0
-        self._start_keep_awake_thread()
-        fd, filename = mkstemp(dir=self.tmp_dir)
-        try:
-            while True:
-                ret = self._write_piece(fd, data_view, data_len, offset)
-                offset += ret
-                if offset >= data_len:
-                    break
-            os.rename(filename, self.path)
-        finally:
-            os.close(fd)
-            self._stop_keep_awake_thread()
+        self._run(self._dump_blocking, self.path, self.tmp_dir, data)
 
     def pickle_dump(self, obj):
         return self.dump(pickle.dumps(obj, pickle.HIGHEST_PROTOCOL))
 
-    def _read_callback(self, event, buf, ret, errno):
-        if ret > 0:
-            event.set(buf)
-        elif ret == 0:
-            exc = EOFError()
-            event.set_exception(exc)
-        else:
-            exc = IOError(errno, os.strerror(errno))
-            event.set_exception(exc)
-
-    def _read_piece(self, fd, offset):
-        event = AsyncResult()
-        callback = partial(self._read_callback, event)
-        aio_read(fd, offset, self.chunk_size, callback)
-        return event.get()
-
     def load(self):
-        data = bytearray()
-        offset = 0
-        self._start_keep_awake_thread()
-        fd = os.open(self.path, os.O_RDONLY)
-        try:
-            while True:
-                buf = self._read_piece(fd, offset)
-                offset += len(buf)
-                data.extend(buf)
-        except EOFError:
-            return bytes(data)
-        finally:
-            os.close(fd)
-            self._stop_keep_awake_thread()
-        raise RuntimeError()
+        return self._run(self._load_blocking, self.path)
 
     def pickle_load(self):
         return pickle.loads(self.load())

@@ -1,7 +1,3 @@
-
-import pytest
-_ = pytest.importorskip('pyaio')
-
 import os
 import unittest
 import re
