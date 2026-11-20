@@ -1,16 +1,55 @@
-
-from mox import MoxTestBase, IgnoreArg
+import threading
+import unittest
+from unittest import mock
 
 import pycares
 import pycares.errno
 import gevent
-from gevent import select
 from gevent.event import AsyncResult
 
-from slimta.util.dns import DNSResolver, DNSError
+from slimta.util.dns import DNSResolver, DNSError, DNSRecord
 
 
-class TestDNS(MoxTestBase):
+def _record(rtype, data, ttl=300):
+    return mock.Mock(type=rtype, ttl=ttl, data=data)
+
+
+def _answer(*records):
+    return mock.Mock(answer=list(records))
+
+
+class TestDNSRecord(unittest.TestCase):
+
+    def test_a(self):
+        rec = DNSRecord(_record(pycares.QUERY_TYPE_A,
+                                pycares.ARecordData(addr='1.2.3.4'), ttl=60))
+        self.assertEqual('1.2.3.4', rec.addr)
+        self.assertEqual('1.2.3.4', rec.host)
+        self.assertEqual(60, rec.ttl)
+
+    def test_mx(self):
+        rec = DNSRecord(_record(pycares.QUERY_TYPE_MX, pycares.MXRecordData(
+            priority=10, exchange='mx.example.com')))
+        self.assertEqual(10, rec.priority)
+        self.assertEqual('mx.example.com', rec.exchange)
+        self.assertEqual('mx.example.com', rec.host)
+
+    def test_txt(self):
+        rec = DNSRecord(_record(pycares.QUERY_TYPE_TXT,
+                                pycares.TXTRecordData(data=b'some reason')))
+        self.assertEqual('some reason', rec.text)
+
+    def test_unknown_attribute(self):
+        rec = DNSRecord(_record(pycares.QUERY_TYPE_A,
+                                pycares.ARecordData(addr='1.2.3.4')))
+        with self.assertRaises(AttributeError):
+            rec.nonexistent
+
+
+class TestDNS(unittest.TestCase):
+
+    def tearDown(self):
+        DNSResolver._channel = None
 
     def test_get_query_type(self):
         self.assertEqual(pycares.QUERY_TYPE_MX,
@@ -19,70 +58,72 @@ class TestDNS(MoxTestBase):
 
     def test_result_cb(self):
         result = AsyncResult()
-        DNSResolver._result_cb(result, 13, None)
-        self.assertEqual(13, result.get())
+        cname = _record(pycares.QUERY_TYPE_CNAME,
+                        pycares.CNAMERecordData(cname='example.com'))
+        a = _record(pycares.QUERY_TYPE_A, pycares.ARecordData(addr='1.2.3.4'))
+        DNSResolver._result_cb(result, pycares.QUERY_TYPE_A,
+                               _answer(cname, a), None)
+        records = result.get()
+        self.assertEqual(['1.2.3.4'], [rec.host for rec in records])
+
+    def test_result_cb_any(self):
+        result = AsyncResult()
+        cname = _record(pycares.QUERY_TYPE_CNAME,
+                        pycares.CNAMERecordData(cname='example.com'))
+        a = _record(pycares.QUERY_TYPE_A, pycares.ARecordData(addr='1.2.3.4'))
+        DNSResolver._result_cb(result, pycares.QUERY_TYPE_ANY,
+                               _answer(cname, a), None)
+        self.assertEqual(2, len(result.get()))
+
+    def test_result_cb_nodata(self):
+        result = AsyncResult()
+        cname = _record(pycares.QUERY_TYPE_CNAME,
+                        pycares.CNAMERecordData(cname='example.com'))
+        DNSResolver._result_cb(result, pycares.QUERY_TYPE_A,
+                               _answer(cname), None)
+        with self.assertRaises(DNSError) as cm:
+            result.get()
+        self.assertEqual(pycares.errno.ARES_ENODATA, cm.exception.errno)
 
     def test_result_cb_error(self):
         result = AsyncResult()
-        DNSResolver._result_cb(result, 13, pycares.errno.ARES_ENOTFOUND)
+        DNSResolver._result_cb(result, pycares.QUERY_TYPE_A, None,
+                               pycares.errno.ARES_ENOTFOUND)
         with self.assertRaises(DNSError) as cm:
             result.get()
         self.assertEqual('Domain name not found [ARES_ENOTFOUND]',
                          str(cm.exception))
 
     def test_query(self):
-        channel = self.mox.CreateMock(pycares.Channel)
-        self.mox.StubOutWithMock(pycares, 'Channel')
-        self.mox.StubOutWithMock(gevent, 'spawn')
-        pycares.Channel().AndReturn(channel)
-        channel.query('example.com', 13, IgnoreArg())
-        gevent.spawn(IgnoreArg())
-        self.mox.ReplayAll()
-        DNSResolver.query('example.com', 13)
+        channel = mock.Mock()
+        with mock.patch.object(pycares, 'Channel', return_value=channel):
+            DNSResolver.query('example.com', 'A')
+        channel.query.assert_called_once_with(
+            'example.com', pycares.QUERY_TYPE_A, callback=mock.ANY)
 
-    def test_wait_channel(self):
-        DNSResolver._channel = channel = self.mox.CreateMockAnything()
-        poll = self.mox.CreateMockAnything()
-        self.mox.StubOutWithMock(select, 'poll')
-        select.poll().AndReturn(poll)
-        channel.getsock().AndReturn(([1, 2], [2, 3]))
-        channel.timeout().AndReturn(1.0)
-        poll.register(1, select.POLLIN)
-        poll.register(2, select.POLLIN | select.POLLOUT)
-        poll.register(3, select.POLLOUT)
-        poll.poll(1.0).AndReturn([(1, select.POLLIN), (3, select.POLLOUT)])
-        channel.process_fd(1, pycares.ARES_SOCKET_BAD)
-        channel.process_fd(pycares.ARES_SOCKET_BAD, 3)
-        channel.getsock().AndReturn(([1, 3], [4]))
-        channel.timeout().AndReturn(1.0)
-        poll.register(3, select.POLLIN)
-        poll.register(4, select.POLLOUT)
-        poll.unregister(2)
-        poll.poll(1.0).AndReturn([])
-        channel.getsock().AndReturn(([1, 3], [4]))
-        channel.timeout().AndReturn(None)
-        channel.process_fd(pycares.ARES_SOCKET_BAD, pycares.ARES_SOCKET_BAD)
-        channel.getsock().AndReturn(([], []))
-        poll.unregister(1)
-        poll.unregister(3)
-        poll.unregister(4)
-        self.mox.ReplayAll()
-        DNSResolver._wait_channel()
+    def test_query_reuses_channel(self):
+        channel = mock.Mock()
+        with mock.patch.object(pycares, 'Channel',
+                               return_value=channel) as channel_cls:
+            DNSResolver.query('example.com', 'A')
+            DNSResolver.query('example.com', 'MX')
+        channel_cls.assert_called_once_with()
+        self.assertEqual(2, channel.query.call_count)
 
-    def test_wait_channel_error(self):
-        DNSResolver._channel = channel = self.mox.CreateMockAnything()
-        poll = self.mox.CreateMockAnything()
-        self.mox.StubOutWithMock(select, 'poll')
-        select.poll().AndReturn(poll)
-        channel.getsock().AndReturn(([1], []))
-        channel.timeout().AndReturn(1.0)
-        poll.register(1, select.POLLIN).AndReturn(None)
-        poll.poll(1.0).AndRaise(ValueError(13))
-        channel.cancel()
-        self.mox.ReplayAll()
-        with self.assertRaises(ValueError):
-            DNSResolver._wait_channel()
-        self.assertIsNone(DNSResolver._channel)
+    def test_query_callback_from_other_thread(self):
+        # pycares 5 runs callbacks on its own event thread.
+        channel = mock.Mock()
+
+        def fake_query(name, query_type, callback):
+            answer = _answer(_record(pycares.QUERY_TYPE_A,
+                                     pycares.ARecordData(addr='1.2.3.4')))
+            threading.Thread(target=callback, args=(answer, None)).start()
+        channel.query.side_effect = fake_query
+        with mock.patch.object(pycares, 'Channel', return_value=channel):
+            result = DNSResolver.query('example.com', 'A')
+        with gevent.Timeout(5.0):
+            records = result.get()
+        self.assertEqual(['1.2.3.4'], [rec.host for rec in records])
 
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4
